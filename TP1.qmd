@@ -8,7 +8,9 @@ format: html
 editor: visual
 ---
 
-## 1.1. Simulation de l'échantillon d'apprentissage (n=1000)
+# Exercice 1
+
+## 1.1 Simulation de l'échantillon d'apprentissage (n=1000)
 
 ```{r}
 set.seed(42)  # pour la reproductibilité
@@ -48,4 +50,78 @@ Y_test <- ifelse(X_test <= 0,
 
 data_test <- data.frame(X = X_test, Y = Y_test)
 head(data_test)
+```
+
+### Quel est le but de ce second échantillon ?
+
+C'est un **échantillon de test (test set)**, distinct de l'échantillon d'apprentissage (train set). Son rôle :
+
+- **Évaluer la performance en généralisation** : on entraîne (ou on calibre) un classificateur sur `data_train`, puis on mesure son taux d'erreur sur `data_test` — des données qu'il n'a jamais "vues".
+
+- **Éviter le biais optimiste de l'évaluation in-sample** : évaluer un modèle sur les données qui ont servi à l'estimer donne une erreur trop optimiste (risque de surapprentissage). Utiliser un échantillon indépendant donne une estimation non biaisée du risque réel.
+
+- **Comparer au risque de Bayes théorique** : ici, comme on connaît R\* = 0.3 (calculé dans les cas précédents), le test set permet de vérifier empiriquement que l'erreur du classificateur de Bayes f\*(x) = 1(x\>0) appliqué sur des données fraîches converge bien vers cette valeur théorique.
+
+Exemple de vérification :
+
+```{r}
+# Classificateur de Bayes : f*(x) = 1 si x > 0
+f_bayes_test <- as.integer(data_test$X > 0)
+
+# Erreur empirique sur le TEST set
+erreur_test <- mean(f_bayes_test != data_test$Y)
+cat("Erreur du classificateur de Bayes sur le test set =", round(erreur_test, 3), "\n")
+cat("Risque de Bayes théorique R* = 0.3\n")
+```
+
+Cette logique **train/test** est le fondement de l'évaluation de tout modèle en apprentissage statistique — on la retrouvera identiquement pour k-NN et Naive Bayes que tu as vus précédemment : entraîner sur un jeu de données, évaluer sur un autre pour estimer honnêtement le risque du modèle.
+
+## 2. Règle de décision du k-NN pour la classification
+
+## 3. Implémentation en R 
+
+On utilise la fonction `knn()` du package `class`, avec un k fixé arbitrairement (pas de recherche du k optimal à ce stade, donc par exemple k=5, un choix courant par défaut).
+
+```{r}
+# install.packages("class")  # si nécessaire
+library(class)
+
+set.seed(42)
+
+# --- Rappel : génération des données (Cas 2) ---
+n_train <- 1000
+X_train <- rnorm(n_train, 0, 1)
+U_train <- runif(n_train, 0, 1)
+Y_train <- ifelse(X_train <= 0,
+                  as.integer(U_train <= 0.2),
+                  as.integer(U_train > 0.4))
+
+n_test <- 200
+X_test <- rnorm(n_test, 0, 1)
+U_test <- runif(n_test, 0, 1)
+Y_test <- ifelse(X_test <= 0,
+                 as.integer(U_test <= 0.2),
+                 as.integer(U_test > 0.4))
+
+# --- Mise en forme pour knn() : il faut des matrices/data frames ---
+train_X <- data.frame(X = X_train)
+test_X  <- data.frame(X = X_test)
+
+# --- Application du k-NN (k=5, choisi arbitrairement, pas de tuning) ---
+k_fixed <- 5
+
+pred_knn <- knn(train = train_X,
+                test  = test_X,
+                cl    = as.factor(Y_train),
+                k     = k_fixed)
+
+# --- Évaluation de l'erreur ---
+pred_knn_num <- as.integer(as.character(pred_knn))
+
+erreur_test <- mean(pred_knn_num != Y_test)
+cat("Erreur du k-NN (k =", k_fixed, ") sur le test set =", round(erreur_test, 3), "\n")
+cat("Risque de Bayes théorique R* =", 0.3, "\n")
+
+# --- Matrice de confusion pour plus de détail ---
+table(Prediction = pred_knn_num, Verite = Y_test)
 ```
