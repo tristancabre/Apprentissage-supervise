@@ -80,7 +80,7 @@ Cette logique **train/test** est le fondement de l'évaluation de tout modèle e
 
 ## 3. Implémentation en R 
 
-On utilise la fonction `knn()` du package `class`, avec un k fixé arbitrairement (pas de recherche du k optimal à ce stade, donc par exemple k=5, un choix courant par défaut).
+On utilise la fonction `knn()` du package `class`, avec un k fixé arbitrairement (pas de recherche du k optimal à ce stade, donc par exemple k=10, un choix courant par défaut).
 
 ```{r}
 # install.packages("class")  # si nécessaire
@@ -107,8 +107,8 @@ Y_test <- ifelse(X_test <= 0,
 train_X <- data.frame(X = X_train)
 test_X  <- data.frame(X = X_test)
 
-# --- Application du k-NN (k=5, choisi arbitrairement, pas de tuning) ---
-k_fixed <- 5
+# --- Application du k-NN (k=10, choisi arbitrairement, pas de tuning) ---
+k_fixed <- 10
 
 pred_knn <- knn(train = train_X,
                 test  = test_X,
@@ -124,4 +124,10 @@ cat("Risque de Bayes théorique R* =", 0.3, "\n")
 
 # --- Matrice de confusion pour plus de détail ---
 table(Prediction = pred_knn_num, Verite = Y_test)
+```
+
+# Exercice 2
+
+```{r}
+library(mlbench)
 ```
