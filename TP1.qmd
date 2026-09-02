@@ -1,0 +1,51 @@
+---
+title: "TP1"
+format: html
+---
+
+---
+
+editor: visual
+---
+
+## 1.1. Simulation de l'échantillon d'apprentissage (n=1000)
+
+```{r}
+set.seed(42)  # pour la reproductibilité
+
+n <- 1000
+X <- rnorm(n, mean = 0, sd = 1)
+U <- runif(n, min = 0, max = 1)
+
+Y <- ifelse(X <= 0,
+            as.integer(U <= 0.2),
+            as.integer(U > 0.4))
+
+# On assemble dans un data frame
+data_train <- data.frame(X = X, Y = Y)
+head(data_train)
+```
+
+```{r}
+# Vérification empirique des probabilités conditionnelles
+p_neg <- mean(data_train$Y[data_train$X <= 0])
+p_pos <- mean(data_train$Y[data_train$X > 0])
+
+cat("P(Y=1 | X<=0) empirique =", round(p_neg, 3), "(théorique = 0.2)\n")
+cat("P(Y=1 | X>0)  empirique =", round(p_pos, 3), "(théorique = 0.6)\n")
+```
+
+## 1.2. Création d'un second échantillon de taille 200
+
+```{r}
+n_test <- 200
+X_test <- rnorm(n_test, mean = 0, sd = 1)
+U_test <- runif(n_test, min = 0, max = 1)
+
+Y_test <- ifelse(X_test <= 0,
+                 as.integer(U_test <= 0.2),
+                 as.integer(U_test > 0.4))
+
+data_test <- data.frame(X = X_test, Y = Y_test)
+head(data_test)
+```
