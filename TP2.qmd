@@ -12,13 +12,14 @@ This session is dedicated to the study of a single dataset, on which you will im
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
+library(reshape2)
 ```
 
 This dataset consists of measurements taken on several wines. For each wine sample, 11 characteristics were measured (acidity, density, pH, etc.) and after tasting, each received a score. For the purposes of this assignment, we will consider that each wine was assigned a class 1 (good quality wine) or class 0 (poor quality wine). The goal is to predict the class of a wine based on its 11 characteristics.
 
 Questions:
 
-1\. Load the dataset and analyze the summary of the table. What do you notice?
+### 1. Load the dataset and analyze the summary of the table. What do you notice?
 
 ```{r}
 Qualite_vin <- read.csv2("data/Donnees_qualite_vin.csv")
@@ -63,14 +64,22 @@ On passe maintenant à l'analyse
 summary(Qualite_vin)
 ```
 
-2\. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
+```{r}
+table(Qualite_vin$quality)
+prop.table(table(Qualite_vin$quality))
+```
+
+Il y a un très grand déséquilibre entre les deux catégories de vin
+
+### 2. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
 
 ```{r}
+# On commence en faisant un boxplot pour une variable particulière
 ggplot(Qualite_vin, aes(x = quality, y = alcohol, fill = quality)) +
   geom_boxplot() +
   labs(title = "Distribution de l'alcool selon la qualité du vin",
        x = "Qualité (0 = mauvais, 1 = bon)", y = "Alcool") +
-  theme_minimal()
+  theme_bw()
 
 ```
 
@@ -79,11 +88,68 @@ vin_long <- Qualite_vin %>%
   pivot_longer(cols = -quality, names_to = "variable", values_to = "valeur")
 
 ggplot(vin_long, aes(x = quality, y = valeur, fill = quality)) +
-  geom_boxplot() +
+  geom_boxplot(outlier.shape = NA) +  # on ignore les valeurs aberrantes
   facet_wrap(~ variable, scales = "free_y") +   # une échelle libre par variable
   labs(title = "Distribution de chaque caractéristique selon la qualité du vin",
        x = "Qualité", y = "Valeur") +
-  theme_minimal() +
+  theme_bw() +
   theme(legend.position = "none")
 
 ```
+
+Les distributions des variables alcool, acide citrique etdensité sont particulièrement différentes selon que la qualité soit 1 ou 0. On peut supposer que ces variables sont particulièrement influantes dans la classification d'un vin comme bon ou mauvais
+
+```{r}
+# On fait des violinplot car why not ?
+ggplot(vin_long, aes(x = quality, y = valeur, fill = quality)) +
+  geom_violin(trim = FALSE) +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(title = "Violin plots par variable et par classe de qualité") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+# On refait la même chose mais avec les courbes de densité
+ggplot(vin_long, aes(x = valeur, fill = quality)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Densités superposées par classe de qualité") +
+  theme_bw()
+
+```
+
+De nouveau, les variables alcool, densité et concentration d'acide citrique sont celles sur lesquelles les différences sont les plus marquées. L'acidité volatile présente aussi d'importants écarts
+
+```{r}
+# ============================================================
+# 5. HEATMAP DE CORRÉLATION entre les 11 variables quantitatives
+# ============================================================
+
+# On exclut la variable qualitative "quality" pour la corrélation
+cor_matrix <- cor(Qualite_vin %>% select(-quality))
+
+# Format long pour ggplot
+cor_melt <- melt(cor_matrix)
+
+ggplot(cor_melt, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Matrice de corrélation entre les variables", fill = "Corrélation")
+
+```
+
+## Part 2: Sample construction, model training
+
+Now it's your turn to get familiar with the models covered in class, by following these instructions:
+
+### 1.Start from the same initial point as in the last exercise of the previous assignment, namely to build a training sample and a test sample. For this step, it is important to take into account what you noticed in question 1 above!
+
+Avant de coder, il faut relier ça à la logique de votre TP1 : pour le TP1 (Exercice 2, k-NN sur *Vehicle*), la question 3.1 demandait *"quelle est la première étape obligatoire de toute méthode d'apprentissage supervisé ?"* — la réponse est **le split train/test**, fait *avant* tout prétraitement, pour éviter toute fuite d'information (data leakage) entre l'ensemble d'apprentissage et l'ensemble de test.
+
+Pour votre dataset de vin, l'indice *"il est important de prendre en compte ce que vous avez remarqué à la question 1"* fait référence à un **déséquilibre des classes** : dans les datasets de qualité de vin, on observe typiquement beaucoup plus de vins "moyens" (classés majoritairement dans une des deux classes) que de vins extrêmes — ce qui donne souvent quelque chose comme 80%/20% ou 65%/35% entre les classes 0 et 1, plutôt qu'un 50/50 parfait.
+
+**Si c'est bien un déséquilibre de classes que vous avez repéré**, un split aléatoire simple (`sample()`) risque de produire un jeu de test avec une proportion de classes très différente du jeu d'apprentissage — ce qui fausse l'évaluation. La solution est un **split stratifié**, qui préserve les proportions de chaque classe dans les deux échantillons.
