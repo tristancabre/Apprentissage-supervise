@@ -12,13 +12,14 @@ This session is dedicated to the study of a single dataset, on which you will im
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
+library(reshape2)
 ```
 
 This dataset consists of measurements taken on several wines. For each wine sample, 11 characteristics were measured (acidity, density, pH, etc.) and after tasting, each received a score. For the purposes of this assignment, we will consider that each wine was assigned a class 1 (good quality wine) or class 0 (poor quality wine). The goal is to predict the class of a wine based on its 11 characteristics.
 
 Questions:
 
-1\. Load the dataset and analyze the summary of the table. What do you notice?
+### 1. Load the dataset and analyze the summary of the table. What do you notice?
 
 ```{r}
 Qualite_vin <- read.csv2("data/Donnees_qualite_vin.csv")
@@ -37,6 +38,7 @@ Qualite_vin <- Qualite_vin %>%
 
 ```{r}
 Qualite_vin$quality <- as.character(Qualite_vin$quality)
+Qualite_vin$quality <- factor(Qualite_vin$quality, levels = c(0, 1), labels = c("Poor", "Good"))
 ```
 
 On vérifie s'il y a des doublons
@@ -63,14 +65,50 @@ On passe maintenant à l'analyse
 summary(Qualite_vin)
 ```
 
-2\. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
+Point important : les variables n'ont pas toutes la même unité ni la même échelle, il faut donc les standardisé avant de faire l'analyse
+
+S**tandardiser par défaut au début du pipeline est une bonne habitude en classification supervisée**. Mais il faut être précis sur ce que ça corrige et ce que ça ne corrige pas, pour ne pas se tromper sur pourquoi on le fait.
+
+**Ce que la standardisation change réellement, algorithme par algorithme :**
+
+| Modèle | Sensible à l'échelle des variables ? | Standardisation nécessaire ? |
+|----|----|----|
+| **k-NN** | Oui — basé sur des distances euclidiennes | **Obligatoire** |
+| **LDA / QDA** | Non — la matrice de covariance absorbe les différences d'échelle, la frontière de décision reste identique | Inutile mathématiquement, mais sans danger |
+| **Naive Bayes (gaussien)** | Non pour l'échelle — le ratio de vraisemblance entre classes est invariant à une transformation linéaire | Inutile pour l'échelle ; ne corrige pas l'asymétrie (votre problème de warnings) |
+| **Régression logistique régularisée, SVM, réseaux de neurones** | Oui — la régularisation et la descente de gradient dépendent de l'échelle | Fortement recommandée |
+| **Arbres de décision / Random Forest** | Non — les splits sont basés sur des seuils, indépendants de l'échelle | Inutile |
+
+**Donc pour votre exercice précis** : LDA, QDA et Naive Bayes n'ont, en théorie, rien à gagner de la standardisation seule (leurs frontières de décision restent mathématiquement identiques). Seul k-NN en a strictement besoin.
+
+**Pourquoi standardiser quand même dès le départ, dans un exercice comme celui-ci ?**
+
+1.  **Cohérence du pipeline** — si vous comparez plusieurs modèles avec le même `train_set`/`test_set`, standardiser une fois en amont évite d'avoir un prétraitement différent par modèle et simplifie le code.
+
+2.  **Ça ne fait jamais de mal** aux modèles qui n'en ont pas besoin (LDA/QDA/NB restent inchangés en théorie).
+
+3.  **Ça prépare le terrain** si vous ajoutez plus tard un modèle sensible à l'échelle (régression logistique, SVM).
+
+**Le point de vigilance technique** (souvent oublié) : la standardisation doit être calculée **uniquement sur le train**, puis appliquée au test avec les mêmes paramètres (moyenne/écart-type du train) — jamais recalculée sur le test, sous peine de fuite d'information. Si vous utilisez `preProcess = c("center", "scale")` **à l'intérieur de `train()`** comme dans le script précédent, `caret` s'en charge automatiquement à chaque pli de validation croisée — c'est la bonne pratique.
+
+Maintenant, on regarde la répartition des observations entre les deux classes de vin
 
 ```{r}
+table(Qualite_vin$quality)
+prop.table(table(Qualite_vin$quality))
+```
+
+Il y a un très grand déséquilibre entre les deux catégories de vin
+
+### 2. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
+
+```{r}
+# On commence en faisant un boxplot pour une variable particulière
 ggplot(Qualite_vin, aes(x = quality, y = alcohol, fill = quality)) +
   geom_boxplot() +
   labs(title = "Distribution de l'alcool selon la qualité du vin",
        x = "Qualité (0 = mauvais, 1 = bon)", y = "Alcool") +
-  theme_minimal()
+  theme_bw()
 
 ```
 
@@ -79,11 +117,324 @@ vin_long <- Qualite_vin %>%
   pivot_longer(cols = -quality, names_to = "variable", values_to = "valeur")
 
 ggplot(vin_long, aes(x = quality, y = valeur, fill = quality)) +
-  geom_boxplot() +
+  geom_boxplot(outlier.shape = NA) +  # on ignore les valeurs aberrantes
   facet_wrap(~ variable, scales = "free_y") +   # une échelle libre par variable
   labs(title = "Distribution de chaque caractéristique selon la qualité du vin",
        x = "Qualité", y = "Valeur") +
-  theme_minimal() +
+  theme_bw() +
   theme(legend.position = "none")
+
+```
+
+Les distributions des variables alcool, acide citrique etdensité sont particulièrement différentes selon que la qualité soit 1 ou 0. On peut supposer que ces variables sont particulièrement influantes dans la classification d'un vin comme bon ou mauvais
+
+```{r}
+# On fait des violinplot car why not ?
+ggplot(vin_long, aes(x = quality, y = valeur, fill = quality)) +
+  geom_violin(trim = FALSE) +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(title = "Violin plots par variable et par classe de qualité") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+# On refait la même chose mais avec les courbes de densité
+ggplot(vin_long, aes(x = valeur, fill = quality)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Densités superposées par classe de qualité") +
+  theme_bw()
+
+```
+
+De nouveau, les variables alcool, densité et concentration d'acide citrique sont celles sur lesquelles les différences sont les plus marquées. L'acidité volatile présente aussi d'importants écarts
+
+```{r}
+# ============================================================
+# 5. HEATMAP DE CORRÉLATION entre les 11 variables quantitatives
+# ============================================================
+
+# On exclut la variable qualitative "quality" pour la corrélation
+cor_matrix <- cor(Qualite_vin %>% select(-quality))
+
+# Format long pour ggplot
+cor_melt <- melt(cor_matrix)
+
+ggplot(cor_melt, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Matrice de corrélation entre les variables", fill = "Corrélation")
+
+```
+
+## Part 2: Sample construction, model training
+
+Now it's your turn to get familiar with the models covered in class, by following these instructions:
+
+### 1.Start from the same initial point as in the last exercise of the previous assignment, namely to build a training sample and a test sample. For this step, it is important to take into account what you noticed in question 1 above!
+
+Avant de coder, il faut relier ça à la logique de votre TP1 : pour le TP1 (Exercice 2, k-NN sur *Vehicle*), la question 3.1 demandait *"quelle est la première étape obligatoire de toute méthode d'apprentissage supervisé ?"* — la réponse est **le split train/test**, fait *avant* tout prétraitement, pour éviter toute fuite d'information (data leakage) entre l'ensemble d'apprentissage et l'ensemble de test.
+
+Pour votre dataset de vin, l'indice *"il est important de prendre en compte ce que vous avez remarqué à la question 1"* fait référence à un **déséquilibre des classes** : dans les datasets de qualité de vin, on observe typiquement beaucoup plus de vins "moyens" (classés majoritairement dans une des deux classes) que de vins extrêmes — ce qui donne souvent quelque chose comme 80%/20% ou 65%/35% entre les classes 0 et 1, plutôt qu'un 50/50 parfait.
+
+**Si c'est bien un déséquilibre de classes que vous avez repéré**, un split aléatoire simple (`sample()`) risque de produire un jeu de test avec une proportion de classes très différente du jeu d'apprentissage — ce qui fausse l'évaluation. La solution est un **split stratifié**, qui préserve les proportions de chaque classe dans les deux échantillons.
+
+```{r}
+library(caret)
+```
+
+```{r}
+# ============================================================
+# Split stratifié train / test
+# ============================================================
+# createDataPartition() respecte les proportions de chaque classe
+# dans l'échantillon d'apprentissage ET dans l'échantillon de test.
+
+set.seed(123)  # pour la reproductibilité
+
+index_train <- createDataPartition(Qualite_vin$quality, p = 0.75, list = FALSE)
+# p = 0.75 -> 75% des données en apprentissage, 25% en test
+# (à ajuster selon la consigne : 70/30 et 80/20 sont aussi courants)
+
+train_set <- Qualite_vin[index_train, ]
+test_set  <- Qualite_vin[-index_train, ]
+
+# --- Vérification : les proportions sont-elles bien préservées ? ---
+prop.table(table(train_set$quality))
+prop.table(table(test_set$quality))
+
+```
+
+```{r}
+# Comparaison avec un split "naïf" (non stratifié), à titre illustratif :
+set.seed(123)
+index_naif <- sample(1:nrow(Qualite_vin), size = 0.75 * nrow(Qualite_vin))
+train_naif <- Qualite_vin[index_naif, ]
+test_naif  <- Qualite_vin[-index_naif, ]
+prop.table(table(train_naif$quality))
+prop.table(table(test_naif$quality))
+# -> on peut observer un décalage de proportions par rapport au split stratifié
+
+```
+
+Rappels :
+
+n(x) = P(Y=1 \| X=n)
+
+Ici, P(Y=1) = 0.86 et P(Y=0) = 0.14
+
+### 2.Model training
+
+```{r}
+# ============================================================
+# Question 2 : Naive Bayes, LDA/QDA, k-NN — entraînement + optimisation
+# ============================================================
+
+library(caret)
+library(MASS)      # lda, qda
+library(klaR)       # naive bayes (utilisé en interne par caret method="nb")
+library(pROC)       # pour l'AUC / ROC
+```
+
+The models you have to train are the following :
+
+a.  Naive Bayes
+b.  Linear and Quadratic Discriminant Analysis
+c.  Nearest Neighbors Algorithm
+
+For each of them, do not forget to optimize their hyperparameters (recall the hyperparameters of each, if applicable, and provide the procedure you should use to optimize them)
+
+**Rappel rapide des hyperparamètres avant le code :**
+
+| Modèle | Hyperparamètre(s) | Procédure d'optimisation |
+|----|----|----|
+| **Naive Bayes** | `usekernel` (densité gaussienne vs. estimation par noyau), `fL` (correction de Laplace), `adjust` (largeur de bande du noyau) | Validation croisée |
+| **LDA** | Aucun (estimateur des paramètres par maximum de vraisemblance, pas de réglage) | — |
+| **QDA** | Aucun (idem, mais covariance par classe) | — |
+| **k-NN** | `k` (nombre de voisins) | Validation croisée (grille de valeurs de k) |
+
+L'algorithme de Bayes et celui des K-NN ont tous deux des hyperparamètres. Il faut donc les estimer avant d'entrainer notre modèle.
+
+On determine les hyperparamètres par validation croisée
+
+```{r}
+# ------------------------------------------------------------
+# 1. Configuration de la validation croisée
+# ------------------------------------------------------------
+# - Comme les classes sont déséquilibrées (85/15), on utilise l'AUC (ROC)
+#   comme métrique d'optimisation plutôt que l'accuracy brute, qui serait trompeuse.
+# - createFolds / trainControl stratifie automatiquement par classe pour la classification.
+
+ctrl <- trainControl(
+  method = "repeatedcv",
+  number = 10,          # 10-fold CV
+  repeats = 3,           # répétée 3 fois pour plus de stabilité
+  classProbs = TRUE,     # nécessaire pour calculer l'AUC
+  summaryFunction = twoClassSummary,  # donne ROC, Sens, Spec
+  savePredictions = "final"
+)
+
+metrique <- "ROC"  # on optimise sur l'AUC plutôt que sur l'accuracy
+
+```
+
+Quelques points importants à souligner dans votre rapport :
+
+- **Pourquoi l'AUC (ROC) plutôt que l'accuracy** : avec le déséquilibre 85/15 déjà identifié, un modèle qui prédit toujours "Poor" aurait 85% d'accuracy sans être utile. L'AUC (et la sensibilité/spécificité affichées dans `confusionMatrix`) donne une image plus honnête.
+
+- **LDA vs QDA** : LDA suppose une frontière de décision linéaire (covariance commune), QDA une frontière quadratique (covariance par classe). Avec 11 variables et 15% seulement en classe 1, QDA peut être instable (moins de données pour estimer chaque matrice de covariance) — c'est un point intéressant à discuter dans votre analyse.
+
+- **k-NN et le choix de k** : le graphique produit par `plot(modele_knn)` vous permet de justifier visuellement la valeur de k retenue (compromis biais/variance — un k trop petit surapprend, un k trop grand lisse trop la frontière).
+
+- Le split train/test du script précédent est réutilisé ici tel quel
+
+#### L'algorithme de Bayes
+
+```{r}
+# ------------------------------------------------------------
+# 2. Naive Bayes
+# ------------------------------------------------------------
+# Hyperparamètres :
+#   - usekernel : TRUE (densité estimée par noyau) vs FALSE (hypothèse gaussienne)
+#   - fL        : correction de Laplace (utile si variables catégorielles ; ici peu d'effet)
+#   - adjust    : largeur de bande du noyau si usekernel = TRUE
+
+grille_nb <- expand.grid(
+  usekernel = FALSE,
+  fL = 0,                    # fL n'a d'effet que si usekernel = FALSE, pas besoin de le faire varier
+  adjust = c(1, 1.5, 2)      # on enlève 0.5, source principale des probas nulles
+)
+
+set.seed(123)
+modele_nb <- train(
+  quality ~ .,
+  data = train_set,
+  method = "nb",
+  trControl = ctrl,
+  tuneGrid = grille_nb,
+  metric = metrique,
+  preProcess = c("center", "scale", "YeoJohnson")  # YeoJohnson gère aussi les valeurs négatives/nulles
+)
+
+modele_nb$bestTune
+plot(modele_nb)  # visualiser l'effet des hyperparamètres sur l'AUC
+
+```
+
+Le code n'est pas optimisé : il y a trop de warnings
+
+#### LDA (Linear Discriminant Analysis)
+
+```{r}
+# ------------------------------------------------------------
+# 3. LDA (Linear Discriminant Analysis)
+# ------------------------------------------------------------
+# Pas d'hyperparamètre : LDA suppose une matrice de covariance commune
+# à toutes les classes, estimée directement par maximum de vraisemblance.
+# On utilise quand même la CV pour avoir une estimation de performance comparable.
+
+set.seed(123)
+modele_lda <- train(
+  quality ~ .,
+  data = train_set,
+  method = "lda",
+  trControl = ctrl,
+  metric = metrique
+)
+```
+
+#### QDA (Quadratic Discriminant Analysis)
+
+```{r}
+# ------------------------------------------------------------
+# 4. QDA (Quadratic Discriminant Analysis)
+# ------------------------------------------------------------
+# Pas d'hyperparamètre non plus : QDA estime une matrice de covariance
+# PROPRE à chaque classe (plus flexible que LDA, mais plus de paramètres à estimer).
+
+set.seed(123)
+modele_qda <- train(
+  quality ~ .,
+  data = train_set,
+  method = "qda",
+  trControl = ctrl,
+  metric = metrique
+)
+```
+
+#### K-Nearest Neighbors
+
+```{r}
+# ------------------------------------------------------------
+# 5. k-Nearest Neighbors
+# ------------------------------------------------------------
+# Hyperparamètre : k (nombre de voisins)
+# k-NN est sensible à l'échelle des variables -> on centre-réduit (preProcess).
+# Procédure : validation croisée sur une grille de valeurs de k (impaires pour éviter les égalités).
+
+grille_knn <- expand.grid(k = seq(1, 31, by = 2))
+
+set.seed(123)
+modele_knn <- train(
+  quality ~ .,
+  data = train_set,
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = grille_knn,
+  metric = metrique,
+  preProcess = c("center", "scale")  # standardisation indispensable pour k-NN
+)
+
+modele_knn$bestTune
+plot(modele_knn)  # AUC en fonction de k -> permet de justifier le choix final
+
+```
+
+### 3.Compare all the models with each other on the test sample and identify the most predictive one.
+
+```{r}
+# ============================================================
+# 6. Comparaison des modèles sur le jeu d'apprentissage (CV)
+# ============================================================
+
+resultats <- resamples(list(
+  NaiveBayes = modele_nb,
+  LDA = modele_lda,
+  QDA = modele_qda,
+  kNN = modele_knn
+))
+
+summary(resultats)
+bwplot(resultats, metric = "ROC")  # comparaison visuelle des AUC en CV
+
+```
+
+```{r}
+# ============================================================
+# 7. Évaluation finale sur le jeu de TEST (jamais utilisé pour l'optimisation)
+# ============================================================
+
+evaluer_modele <- function(modele, nom) {
+  pred <- predict(modele, newdata = test_set)
+  prob <- predict(modele, newdata = test_set, type = "prob")[, "Good"]
+  
+  cm <- confusionMatrix(pred, test_set$quality, positive = "Good")
+  auc_test <- roc(test_set$quality, prob, levels = c("Poor", "Good"))$auc
+  
+  cat("\n====", nom, "====\n")
+  print(cm)
+  cat("AUC test :", round(auc_test, 3), "\n")
+  
+  invisible(list(cm = cm, auc = auc_test))
+}
+
+res_nb  <- evaluer_modele(modele_nb, "Naive Bayes")
+res_lda <- evaluer_modele(modele_lda, "LDA")
+res_qda <- evaluer_modele(modele_qda, "QDA")
+res_knn <- evaluer_modele(modele_knn, "k-NN")
 
 ```
