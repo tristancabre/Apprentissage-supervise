@@ -9,6 +9,7 @@ This session is dedicated to the study of a single dataset, on which you will im
 ## Part 1: Loading the dataset, exploratory analysis
 
 ```{r}
+#| output: false
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
@@ -48,6 +49,7 @@ sum(duplicated(Qualite_vin))
 ```
 
 ```{r}
+#| output: false
 Qualite_vin %>%
   filter(duplicated(.))
 ```
@@ -72,7 +74,7 @@ S**tandardiser par défaut au début du pipeline est une bonne habitude en class
 **Ce que la standardisation change réellement, algorithme par algorithme :**
 
 | Modèle | Sensible à l'échelle des variables ? | Standardisation nécessaire ? |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | **k-NN** | Oui — basé sur des distances euclidiennes | **Obligatoire** |
 | **LDA / QDA** | Non — la matrice de covariance absorbe les différences d'échelle, la frontière de décision reste identique | Inutile mathématiquement, mais sans danger |
 | **Naive Bayes (gaussien)** | Non pour l'échelle — le ratio de vraisemblance entre classes est invariant à une transformation linéaire | Inutile pour l'échelle ; ne corrige pas l'asymétrie (votre problème de warnings) |
@@ -230,6 +232,7 @@ Ici, P(Y=1) = 0.86 et P(Y=0) = 0.14
 ### 2.Model training
 
 ```{r}
+#| output: false
 # ============================================================
 # Question 2 : Naive Bayes, LDA/QDA, k-NN — entraînement + optimisation
 # ============================================================
@@ -251,7 +254,7 @@ For each of them, do not forget to optimize their hyperparameters (recall the hy
 **Rappel rapide des hyperparamètres avant le code :**
 
 | Modèle | Hyperparamètre(s) | Procédure d'optimisation |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | **Naive Bayes** | `usekernel` (densité gaussienne vs. estimation par noyau), `fL` (correction de Laplace), `adjust` (largeur de bande du noyau) | Validation croisée |
 | **LDA** | Aucun (estimateur des paramètres par maximum de vraisemblance, pas de réglage) | — |
 | **QDA** | Aucun (idem, mais covariance par classe) | — |
@@ -417,6 +420,7 @@ bwplot(resultats, metric = "ROC")  # comparaison visuelle des AUC en CV
 ```
 
 ```{r}
+#| warning: false
 # ============================================================
 # 7. Évaluation finale sur le jeu de TEST (jamais utilisé pour l'optimisation)
 # ============================================================
