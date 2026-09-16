@@ -67,6 +67,7 @@ On passe maintenant à l'analyse
 summary(Qualite_vin)
 ```
 
+<<<<<<< HEAD
 Point important : les variables n'ont pas toutes la même unité ni la même échelle, il faut donc les standardisé avant de faire l'analyse
 
 S**tandardiser par défaut au début du pipeline est une bonne habitude en classification supervisée**. Mais il faut être précis sur ce que ça corrige et ce que ça ne corrige pas, pour ne pas se tromper sur pourquoi on le fait.
@@ -105,6 +106,18 @@ Il y a un très grand déséquilibre entre les deux catégories de vin
 ### 2. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
 
 ```{r}
+=======
+```{r}
+table(Qualite_vin$quality)
+prop.table(table(Qualite_vin$quality))
+```
+
+Il y a un très grand déséquilibre entre les deux catégories de vin
+
+### 2. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
+
+```{r}
+>>>>>>> 14a36f42e72ac24d8b8cc4aca026f902e78bcf7d
 # On commence en faisant un boxplot pour une variable particulière
 ggplot(Qualite_vin, aes(x = quality, y = alcohol, fill = quality)) +
   geom_boxplot() +
@@ -184,6 +197,7 @@ Avant de coder, il faut relier ça à la logique de votre TP1 : pour le TP1 (Exe
 Pour votre dataset de vin, l'indice *"il est important de prendre en compte ce que vous avez remarqué à la question 1"* fait référence à un **déséquilibre des classes** : dans les datasets de qualité de vin, on observe typiquement beaucoup plus de vins "moyens" (classés majoritairement dans une des deux classes) que de vins extrêmes — ce qui donne souvent quelque chose comme 80%/20% ou 65%/35% entre les classes 0 et 1, plutôt qu'un 50/50 parfait.
 
 **Si c'est bien un déséquilibre de classes que vous avez repéré**, un split aléatoire simple (`sample()`) risque de produire un jeu de test avec une proportion de classes très différente du jeu d'apprentissage — ce qui fausse l'évaluation. La solution est un **split stratifié**, qui préserve les proportions de chaque classe dans les deux échantillons.
+<<<<<<< HEAD
 
 ```{r}
 library(caret)
@@ -445,3 +459,5 @@ res_qda <- evaluer_modele(modele_qda, "QDA")
 res_knn <- evaluer_modele(modele_knn, "k-NN")
 
 ```
+=======
+>>>>>>> 14a36f42e72ac24d8b8cc4aca026f902e78bcf7d
