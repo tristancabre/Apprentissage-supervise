@@ -310,14 +310,17 @@ grille_nb <- expand.grid(
 )
 
 set.seed(123)
-modele_nb <- train(
-  quality ~ .,
-  data = train_set,
-  method = "nb",
-  trControl = ctrl,
-  tuneGrid = grille_nb,
-  metric = metrique,
-  preProcess = c("center", "scale", "YeoJohnson")  # YeoJohnson gère aussi les valeurs négatives/nulles
+set.seed(123)
+modele_nb <- suppressWarnings(
+  train(
+    quality ~ .,
+    data = train_set,
+    method = "nb",
+    trControl = ctrl,
+    tuneGrid = grille_nb,
+    metric = metrique,
+    preProcess = c("center", "scale", "YeoJohnson")
+  )
 )
 
 modele_nb$bestTune
@@ -325,7 +328,7 @@ plot(modele_nb)  # visualiser l'effet des hyperparamètres sur l'AUC
 
 ```
 
-Le code n'est pas optimisé : il y a trop de warnings
+Le code n'est pas optimisé : il y a trop de warnings (on les a masqué en attendant)
 
 #### LDA (Linear Discriminant Analysis)
 
