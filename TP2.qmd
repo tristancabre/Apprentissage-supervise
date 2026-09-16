@@ -1,0 +1,89 @@
+---
+title: "TP2"
+format: html
+editor: visual
+---
+
+This session is dedicated to the study of a single dataset, on which you will implement all the discrimination models covered in class so far (nearest neighbors algorithm, naive Bayes, discriminant analysis)
+
+## Part 1: Loading the dataset, exploratory analysis
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+```
+
+This dataset consists of measurements taken on several wines. For each wine sample, 11 characteristics were measured (acidity, density, pH, etc.) and after tasting, each received a score. For the purposes of this assignment, we will consider that each wine was assigned a class 1 (good quality wine) or class 0 (poor quality wine). The goal is to predict the class of a wine based on its 11 characteristics.
+
+Questions:
+
+1\. Load the dataset and analyze the summary of the table. What do you notice?
+
+```{r}
+Qualite_vin <- read.csv2("data/Donnees_qualite_vin.csv")
+
+str(Qualite_vin)
+```
+
+On remet les colonnes dans le bon type
+
+```{r}
+Qualite_vin <- Qualite_vin %>%
+  mutate(across(c(fixed.acidity, volatile.acidity, citric.acid, residual.sugar,
+                  chlorides, free.sulfur.dioxide, total.sulfur.dioxide, density,
+                  pH, sulphates, alcohol),as.numeric))
+```
+
+```{r}
+Qualite_vin$quality <- as.character(Qualite_vin$quality)
+```
+
+On vérifie s'il y a des doublons
+
+```{r}
+sum(duplicated(Qualite_vin))
+```
+
+```{r}
+Qualite_vin %>%
+  filter(duplicated(.))
+```
+
+Il y a beaucoup de doublons, on les retire alors
+
+```{r}
+Qualite_vin <- Qualite_vin %>%
+  distinct()
+```
+
+On passe maintenant à l'analyse
+
+```{r}
+summary(Qualite_vin)
+```
+
+2\. Using a preliminary visual exploration of the data, identify the characteristics that appear at first glance to most influence the quality of a wine.
+
+```{r}
+ggplot(Qualite_vin, aes(x = quality, y = alcohol, fill = quality)) +
+  geom_boxplot() +
+  labs(title = "Distribution de l'alcool selon la qualité du vin",
+       x = "Qualité (0 = mauvais, 1 = bon)", y = "Alcool") +
+  theme_minimal()
+
+```
+
+```{r}
+vin_long <- Qualite_vin %>%
+  pivot_longer(cols = -quality, names_to = "variable", values_to = "valeur")
+
+ggplot(vin_long, aes(x = quality, y = valeur, fill = quality)) +
+  geom_boxplot() +
+  facet_wrap(~ variable, scales = "free_y") +   # une échelle libre par variable
+  labs(title = "Distribution de chaque caractéristique selon la qualité du vin",
+       x = "Qualité", y = "Valeur") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
