@@ -440,3 +440,231 @@ représente les **prédictions parfaites**.
 Plus les points sont proches de cette droite, plus les prédictions sont bonnes
 
 e.  Now, let’s look at the robustness of CART trees. By generating several new training samples (each with a size equal to 50% of the original data), illustrate that the CART tree is not robust. Comment.
+
+Le sujet demande de :
+
+> générer plusieurs nouveaux échantillons d'apprentissage contenant chacun 50 % des données originales, construire un arbre CART pour chacun et montrer que l'arbre n'est pas robuste.
+
+L'idée est de montrer que **de petites modifications de l'échantillon d'apprentissage peuvent entraîner des arbres très différents**.
+
+Par exemple, on peut créer 10 échantillons contenant 50 % des observations :
+
+```{r}
+set.seed(123)
+
+n <- nrow(wine)
+
+arbres <- list()
+
+for (i in 1:10) {
+  
+  indices <- sample(
+    1:n,
+    size = 0.5 * n
+  )
+  
+  train_i <- wine[indices, ]
+  
+  arbres[[i]] <- rpart(
+    quality ~ .,
+    data = train_i,
+    method = "anova"
+  )
+}
+```
+
+On possède maintenant :
+
+```         
+arbres[[1]] arbres[[2]] ... arbres[[10]]
+```
+
+soit **10 arbres CART construits sur 10 échantillons différents**.
+
+Maintenant, il faut comparer les arbres. On peut par exemple regarder la variable choisie à la racine.
+
+```{r}
+sapply(
+  arbres,
+  function(arbre) arbre$frame$var[1]
+)
+```
+
+Ici, les arbres choisissent tous l'alcool comme première variable
+
+On peut tout de même comparer les 4 premiers arbres par exemple :
+
+```{r}
+par(mfrow = c(2, 2))
+
+for (i in 1:4) {
+  rpart.plot(
+    arbres[[i]],
+    type = 2,
+    extra = 1,
+    fallen.leaves = TRUE
+  )
+}
+```
+
+Les 4 arbres sont sensiblement différents. Cela nous montre que la construction de l'arbre dépend nécéssairement du jeu de données
+
+Les arbres CART sont sensibles à l'échantillon d'apprentissage utilisé. En construisant plusieurs arbres à partir d'échantillons contenant 50 % des observations initiales, on observe des différences dans leur structure, notamment dans les variables et les seuils utilisés pour effectuer les séparations. Cette variabilité montre que les arbres CART sont peu robustes : une modification de l'échantillon d'apprentissage peut entraîner une modification importante de l'arbre obtenu. Cette instabilité constitue notamment une motivation pour utiliser des méthodes d'ensemble telles que les forêts aléatoires.
+
+3.  Random Forests
+
+<!-- -->
+
+a.  Using the documentation of the caret package, identify the hyperparameters of a random forest built with the ranger package that you can estimate via cross-validation.
+
+Pour `ranger`, les principaux hyperparamètres que l'on peut faire varier sont notamment :
+
+-  `mtry` : nombre de variables candidates à chaque séparation ;
+
+-  `min.node.size` : taille minimale d'un nœud terminal ;
+
+-  `splitrule` : règle utilisée pour effectuer les séparations.
+
+Pour une forêt de **régression**, on peut notamment utiliser :
+
+```{r}
+splitrule = "variance"
+```
+
+Le plus important à retenir :
+
+### `mtry`
+
+C'est le nombre de variables sélectionnées aléatoirement parmi les variables explicatives et considérées lors de chaque séparation.
+
+Par exemple, si on a 11 variables :
+
+```         
+mtry = 3
+```
+
+signifie qu'à chaque séparation, l'algorithme choisit aléatoirement **3 variables parmi les 11** et cherche la meilleure séparation parmi ces 3.
+
+### `min.node.size`
+
+C'est le nombre minimal d'observations qu'un nœud terminal peut contenir.
+
+Une petite valeur permet de construire des arbres plus complexes, tandis qu'une grande valeur produit des arbres plus simples.
+
+### `splitrule`
+
+Elle définit la règle utilisée pour déterminer la meilleure séparation.
+
+b.  Run the cross-validation procedure by varying them and visualize the validation error during the process.
+
+Le sujet demande ensuite de faire varier les hyperparamètres et de **visualiser l'erreur de validation au cours du processus**.
+
+On peut utiliser `caret` pour effectuer la validation croisée et `ranger` pour construire les forêts.
+
+```{r}
+library(caret)
+library(ranger)
+library(ggplot2)
+```
+
+Il faut ensuite définir notre niveau de validation croisée. On peut par exemple utiliser une **validation croisée à 5 folds** :
+
+```{r}
+set.seed(123)
+
+ctrl <- trainControl(
+  method = "cv",
+  number = 5
+)
+```
+
+Le jeu d'apprentissage `train` est alors séparé en 5 parties.
+
+Pour chaque combinaison d'hyperparamètres :
+
+```         
+Fold 1 → apprentissage sur 4 parties, validation sur 1 
+Fold 2 → apprentissage sur 4 parties, validation sur 1 
+... 
+Fold 5 → apprentissage sur 4 parties, validation sur 1
+```
+
+L'erreur moyenne sur les 5 folds permet de comparer les différentes configurations.
+
+Il faut également définir mtry (le nombre de variables à considérer à chaque étape)
+
+```{r}
+grid <- expand.grid(
+  mtry = 1:11,
+  splitrule = "variance",
+  min.node.size = 5
+)
+```
+
+On peut désormais entrainer la forêt :
+
+```{r}
+set.seed(123)
+
+rf_cv <- train(
+  quality ~ .,
+  data = train,
+  method = "ranger",
+  trControl = ctrl,
+  tuneGrid = grid,
+  metric = "RMSE",
+  num.trees = 500,
+  importance = "impurity"
+)
+```
+
+```{r}
+rf_cv
+```
+
+On peut également visualiser l'erreur :
+
+```{r}
+ggplot(
+  rf_cv$results,
+  aes(x = mtry, y = RMSE)
+) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Erreur de validation selon mtry",
+    x = "Nombre de variables candidates (mtry)",
+    y = "RMSE"
+  )
+```
+
+Rappels :
+
+**MSE = Mean Squared Error**, en français **erreur quadratique moyenne**.
+
+**RMSE = Root Mean Squared Error**, en français **racine de l'erreur quadratique moyenne**.
+
+Le sujet demande de faire varier les hyperparamètres. On peut donc également tester `mtry` et `min.node.size`.
+
+```{r}
+grid <- expand.grid(
+  mtry = c(2, 4, 6, 8, 10),
+  splitrule = "variance",
+  min.node.size = c(1, 5, 10, 20)
+)
+```
+
+```{r}
+set.seed(123)
+
+rf_cv <- train(
+  quality ~ .,
+  data = train,
+  method = "ranger",
+  trControl = ctrl,
+  tuneGrid = grid,
+  metric = "RMSE",
+  num.trees = 500,
+  importance = "impurity"
+)
+```
