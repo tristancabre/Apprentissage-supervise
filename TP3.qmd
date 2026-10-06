@@ -1,0 +1,442 @@
+---
+title: "TP3"
+format: html
+editor: visual
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(sampling)
+library(tidyr)
+```
+
+## Part 1: Loading the dataset, exploratory analysis
+
+The dataset includes measurements taken on wine, as in TP 2. For each wine sample, 11 characteristics were measured (acidity, density, pH, etc.), and after tasting, each received a score. Unlike TP 2, however, you are given the actual score (and not the good quality / bad quality class), so this is a regression problem.
+
+1.  Load the dataset. Perform an exploratory analysis to highlight the characteristics of the data.
+
+```{r}
+wine <- read.csv2("Donnees_qualite_vins.csv", sep = ",")
+```
+
+```{r}
+str(wine)
+```
+
+On corrige les types des variables
+
+```{r}
+wine <- wine %>%
+  mutate(across(c(fixed.acidity, volatile.acidity, citric.acid, residual.sugar,
+                  chlorides, free.sulfur.dioxide, total.sulfur.dioxide, density,
+                  pH, sulphates, alcohol),as.numeric))
+```
+
+On vérifie s'il y a des doublons
+
+```{r}
+sum(duplicated(wine))
+```
+
+```{r}
+#| output: false
+wine %>%
+  filter(duplicated(.))
+```
+
+Il y a beaucoup de doublons, on les retire alors
+
+```{r}
+wine <- wine %>%
+  distinct()
+```
+
+On passe alors à l'analyse
+
+```{r}
+summary(wine)
+```
+
+```{r}
+library(dplyr)
+
+wine %>%
+  summarise(
+    across(
+      everything(),
+      list(
+        moyenne = ~mean(.x, na.rm = TRUE),
+        ecart_type = ~sd(.x, na.rm = TRUE),
+        minimum = ~min(.x, na.rm = TRUE),
+        maximum = ~max(.x, na.rm = TRUE)
+      )
+    )
+  )
+```
+
+```{r}
+vin_long <- wine %>%
+  pivot_longer(
+    cols = -quality,
+    names_to = "variable",
+    values_to = "valeur"
+  )
+
+ggplot(vin_long, aes(x = valeur)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~ variable, scales = "free") +
+  labs(
+    title = "Distribution des caractéristiques des vins",
+    x = "Valeur",
+    y = "Effectif"
+  )
+```
+
+La variable `quality` est maintenant une **variable quantitative à expliquer**, puisque le TP précise qu'il s'agit d'un problème de **régression** et non de classification.
+
+On peut donc regarder sa distribution :
+
+```{r}
+ggplot(wine, aes(x = quality)) +
+  geom_histogram(binwidth = 1) +
+  labs(
+    title = "Distribution de la qualité des vins",
+    x = "Qualité",
+    y = "Effectif"
+  )
+```
+
+2.  Using a preliminary visual exploration of the data, identify the features that seem at first glance to have the most influence on wine quality.
+
+```{r}
+ggplot(vin_long, aes(x = valeur, y = quality)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+    title = "Relation entre les caractéristiques et la qualité",
+    x = "Caractéristique",
+    y = "Qualité"
+  )
+```
+
+On peut également calculer les corrélations pour avoir un premier indicateur numérique :
+
+```{r}
+correlations <- cor(wine)
+
+round(correlations["quality", names(wine) != "quality"], 2)
+```
+
+Les variables volatile_acidity, sulphates, alcohool et citric_acid sont assez correlées à la variable qualité. On retrouve aussi ce résultat visuellement.
+
+**Attention :** une forte corrélation ne signifie pas nécessairement que la variable est réellement la plus importante pour un modèle. Ici, le TP demande seulement une **première exploration visuelle**. Les arbres CART et les forêts aléatoires permettront ensuite d'évaluer l'importance des variables de manière plus adaptée.
+
+### Faut-il standardiser les variables avant toute analyse ?
+
+**Non, pas pour tout le TP.** C'est une distinction importante.
+
+### Pour l'analyse exploratoire → non
+
+Tu peux travailler directement avec les variables originales :
+
+```         
+alcohol : environ 8–14 density : environ 0.99–1.00 pH      : environ 2–4 sulphates : environ 0.3–2 ...
+```
+
+Le fait qu'elles soient sur des échelles différentes n'empêche pas de faire des histogrammes, boxplots, nuages de points ou corrélations.
+
+### Pour CART → non
+
+Un arbre CART **n'a pas besoin de variables standardisées**.
+
+Par exemple, un arbre peut faire :
+
+```         
+alcohol < 10.5
+```
+
+ou
+
+```         
+pH < 3.2
+```
+
+Les différences d'échelle ne posent pas de problème.
+
+### Pour Random Forest → non
+
+Même chose pour les forêts aléatoires utilisant `ranger` : **la standardisation n'est généralement pas nécessaire**, puisque les arbres reposent sur des seuils de séparation.
+
+C'est cohérent avec le TP, qui demande ensuite de construire un arbre CART puis une forêt aléatoire.
+
+### En revanche, pour l'UMAP → oui
+
+Ici, le sujet demande **explicitement** de normaliser les données avant de calculer la projection UMAP :
+
+> 
+>
+> « Normalize the training set data, then compute the UMAP projection »
+
+Donc tu pourrais retenir :
+
+| Étape                | Standardiser ? |
+|----------------------|----------------|
+| Analyse exploratoire | ❌ Non         |
+| Corrélations         | ❌ Non         |
+| CART                 | ❌ Non         |
+| Random Forest        | ❌ Non         |
+| UMAP                 | ✅ Oui         |
+
+## Part 2: Sample splitting and model training
+
+In this part, you will train CART tree models and random forests. You will use the ranger package for random forests.
+
+1\. Build the necessary datasets for supervised learning
+
+On est dans un problème de **régression** : `quality` est la variable cible et les 11 caractéristiques du vin sont les variables explicatives. Le sujet précise bien que le score réel est fourni et qu'il faut donc prédire une valeur quantitative.
+
+On va donc séparer les données en :
+
+-  **jeu d'apprentissage (`train`)** : utilisé pour entraîner le modèle ;
+
+-  **jeu de test (`test`)** : utilisé ensuite pour mesurer l'erreur de généralisation.
+
+On peut par exemple utiliser **80 % pour l'apprentissage et 20 % pour le test**.
+
+```{r}
+set.seed(123)
+
+# Nombre d'observations
+n <- nrow(wine)
+
+# Indices des observations utilisées pour l'apprentissage
+indices_train <- sample(
+  1:n,
+  size = 0.8 * n
+)
+
+# Jeu d'apprentissage
+train <- wine[indices_train, ]
+
+# Jeu de test
+test <- wine[-indices_train, ]
+```
+
+On vérifie les dimensions des jeux de données
+
+```{r}
+dim(train)
+dim(test)
+```
+
+Pour l'apprentissage supervisé, on peut également distinguer explicitement X et Y
+
+```{r}
+# Variables explicatives
+X_train <- train %>%
+  select(-quality)
+
+# Variable à prédire
+y_train <- train$quality
+
+# Variables explicatives du test
+X_test <- test %>%
+  select(-quality)
+
+# Valeurs réelles du test
+y_test <- test$quality
+```
+
+2.  CART Algorithm
+
+<!-- -->
+
+a.  Train a CART tree.
+
+```{r}
+library(rpart)
+
+arbre_cart <- rpart(
+  quality ~ .,
+  data = train,
+  method = "anova"
+)
+```
+
+### Pourquoi `method = "anova"` ?
+
+C'est important ici.
+
+Notre variable `quality` est **quantitative**, donc on fait de la **régression**.
+
+Avec `rpart` :
+
+-  `method = "class"` → arbre de classification ;
+
+-  `method = "anova"` → arbre de régression.
+
+```{r}
+print(arbre_cart)
+```
+
+```{r}
+#| output: false
+
+summary(arbre_cart)
+```
+
+```{r}
+library(rpart.plot)
+
+rpart.plot(
+  arbre_cart,
+  type = 2,
+  extra = 1,
+  fallen.leaves = TRUE
+)
+```
+
+b.  Identify in the result the competing and surrogate splits for the root node. For this node, what split would the tree use to predict a new wine for which the alcohol content and density were not measured and are therefore missing?
+
+Le sujet demande :
+
+> Identifier les **competing splits** et les **surrogate splits** pour le nœud racine. Puis déterminer quelle séparation serait utilisée pour un vin dont `alcohol` et `density` sont manquants.
+
+```{r}
+arbre_cart$splits
+```
+
+Le tableau des splits permet notamment d'identifier les variables utilisées pour les différentes séparations.
+
+Pour que `rpart` construise les **surrogate splits**, il faut les demander lors de la construction de l'arbre :
+
+```{r}
+arbre_cart <- rpart(
+  quality ~ .,
+  data = train,
+  method = "anova",
+  control = rpart.control(
+    usesurrogate = 2,
+    maxsurrogate = 5
+  )
+)
+```
+
+- `usesurrogate = 2` : utilise les splits suppléants lorsqu'une valeur est manquante.
+
+<!-- -->
+
+-  `maxsurrogate = 5` : conserve jusqu'à 5 splits suppléants.
+
+### Que signifie tout cela ?
+
+Supposons que le premier split soit :
+
+```         
+alcohol < 10.5
+```
+
+C'est le **primary split** : c'est celui que l'arbre utilise normalement.
+
+Les **competing splits** sont d'autres séparations qui auraient également pu être utilisées à ce nœud.
+
+Les **surrogate splits**, eux, sont particulièrement utiles lorsqu'une valeur de la variable principale est manquante.
+
+Par exemple :
+
+```         
+Primary split : alcohol < 10.5  Surrogate split : density < 0.997
+```
+
+Si `alcohol` est manquant pour une nouvelle observation, l'arbre peut utiliser `density` pour essayer de reproduire la décision qui aurait été prise avec `alcohol`.
+
+### Dans notre cas
+
+Le sujet te donne une situation où :
+
+```         
+alcohol = NA density = NA
+```
+
+Il faut donc regarder dans le résultat de `summary(arbre_cart)` **quelle variable apparaît comme meilleur surrogate split disponible lorsque `alcohol` et `density` sont tous les deux manquants**.
+
+c.  Visualize the CART tree. Using just the diagram, what would be the prediction for a new wine with the following characteristics: alcohol = 11.5, pH = 2, free.sulfur.dioxide = 7.6, sulphates = 0.42, volatile.acidity = 0.98 ?
+
+d.  Compute the generalization error of this tree and propose a visualization to compare true values with predicted ones.
+
+Comme nous avons gardé un jeu de test, on peut faire les prédictions :
+
+```{r}
+predictions <- predict(
+  arbre_cart,
+  newdata = test
+)
+```
+
+### Calcul de l'erreur
+
+Pour une régression, une mesure classique est l'**erreur quadratique moyenne (MSE)** :
+
+```{r}
+MSE <- mean((y_test - predictions)^2)
+
+MSE
+```
+
+On peut également calculer la RMSE
+
+```{r}
+RMSE <- sqrt(MSE)
+
+RMSE
+```
+
+La RMSE est particulièrement facile à interpréter car elle est exprimée dans la même unité que `quality`.
+
+Par exemple, si :
+
+```         
+RMSE = 0.72
+```
+
+on peut dire que les prédictions s'écartent en moyenne d'environ **0,72 point de qualité** de la valeur réelle, selon cette mesure.
+
+### Visualiser les valeurs réelles et prédites
+
+Le graphique le plus adapté est un nuage de points :
+
+```{r}
+resultats <- data.frame(
+  reel = y_test,
+  predit = predictions
+)
+
+ggplot(resultats, aes(x = reel, y = predit)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Qualité réelle vs qualité prédite",
+    x = "Qualité réelle",
+    y = "Qualité prédite"
+  ) +
+  theme_minimal()
+```
+
+La droite :
+
+```         
+y = x
+```
+
+représente les **prédictions parfaites**.
+
+Plus les points sont proches de cette droite, plus les prédictions sont bonnes
+
+e.  Now, let’s look at the robustness of CART trees. By generating several new training samples (each with a size equal to 50% of the original data), illustrate that the CART tree is not robust. Comment.
