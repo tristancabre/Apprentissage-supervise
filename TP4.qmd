@@ -1,0 +1,345 @@
+---
+title: "TP4"
+format: html
+editor: visual
+---
+
+## Exercice 2
+
+The aim of this part of the TP is spam detection in emails received by an individual: to build a filter that automatically distinguishes spam from relevant messages with a view to their non-delivery or even their destruction. Spam includes "unsolicited" advertising for products, websites, tricks to earn money easily, invitations to forward a message to a certain number of people ("chains") and many other unwanted messages that pollute electronic mailboxes. It should be noted that the theme of spam received by an individual strongly depends on their network of contacts, their interests, their professional activity, etc...
+
+It is therefore possible to personalize a spam detector. The database was compiled by a Hewlett-Packard engineer (George Forman, Palo Alto, USA) who collected a number of his relevant emails (non-spam) and others considered undesirable (spam) in June and July 1999. The spam filter we are going to build is therefore personalized because the learning is done on the messages he receives, the characteristics of the messages received reflect the messages received by this person.
+
+The database contains 4601 messages, of which 1813 are spam (39.4%).
+
+57 variables allow each message to be characterized, they correspond to the characters, words it contains and especially the frequency with which they appear:
+
+• 48 continuous variables \[0-100\] are of the type "frequency_of_word_WORD": percentage of words in the email equal to WORD = 100\*(number of times the word WORD appears in the e-mail / total number of words in the email). A WORD is here a sequence of alphanumeric characters bounded by non-alphanumeric characters or blanks. The relative frequencies of 48 particular words are calculated for each email • 6 continuous variables \[0-100\] are of the type "frequency_of_character_CHARACTER": the same definition as above, with not words, but particular characters such as "!", for example.
+
+• 1 positive continuous variable equal to the average length of uninterrupted sequences of capital letters in the message (V55)
+
+• 1 positive continuous variable equal to the longest length of all uninterrupted sequences of capital letters (V56)
+
+• 1 continuous variable equal to the sum of the lengths of all uninterrupted sequences of capital letters (=total number of capital letters in the message) (V57)
+
+• The target variable is the message status: is_spam=0 (non-spam) or is_spam =1 (spam)
+
+The data file is available in the "nutshell" library, it is the "spambase" table.
+
+Implement the following methods: linear and quadratic discriminant analysis, CART tree, a CART tree with differentiated cost of 5 to 1, random forests, and k nearest neighbors. In particular, as in TP2, you will need to propose a procedure to optimize the hyper-parameters of the methods, if necessary
+
+```{r}
+library(caret)
+library(MASS)           # lda, qda
+library(rpart)           # CART
+library(rpart.plot)       # visualisation de l'arbre
+library(randomForest)      # random forest
+library(pROC)                # ROC / AUC
+```
+
+```{r}
+spambase <- read.csv2("spambase.csv", sep = ',', header = TRUE)
+```
+
+```{r}
+str(spambase)
+```
+
+```{r}
+library(dplyr)
+spambase <- spambase %>% mutate(across(where(is.character), as.numeric))
+
+spambase$is_spam <- factor(spambase$is_spam,
+                           levels = c(0, 1),
+                           labels = c("NonSpam", "Spam"))
+```
+
+```{r}
+# ------------------------------------------------------------
+# Split train/test stratifie
+# ------------------------------------------------------------
+
+set.seed(123)
+index_train <- createDataPartition(spambase$is_spam, p = 0.75, list = FALSE)
+train_set <- spambase[index_train, ]
+test_set  <- spambase[-index_train, ]
+
+train_set$X <- NULL
+test_set$X  <- NULL
+```
+
+```{r}
+# ------------------------------------------------------------
+# Configuration commune de la validation croisee
+# ------------------------------------------------------------
+
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,  # calcule ROC, Sens, Spec
+  savePredictions = "final"
+)
+
+metrique <- "ROC"
+
+```
+
+### LDA
+
+```{r}
+# ============================================================
+# 1. LDA
+# ============================================================
+# Pas d'hyperparametre.
+
+set.seed(123)
+modele_lda <- train(
+  is_spam ~ .,
+  data = train_set,
+  method = "lda",
+  trControl = ctrl,
+  metric = metrique,
+  preProcess = c("center", "scale")
+)
+
+```
+
+### QDA
+
+```{r}
+# ============================================================
+# 2. QDA
+# ============================================================
+# Pas d'hyperparametre. Attention : QDA estime une matrice de covariance par
+# classe -> peut etre instable avec 57 variables si certaines sont tres
+# correlees (singularite). A surveiller.
+
+set.seed(123)
+modele_qda <- tryCatch(
+  train(
+    is_spam ~ .,
+    data = train_set,
+    method = "qda",
+    trControl = ctrl,
+    metric = metrique,
+    preProcess = c("center", "scale")
+  ),
+  error = function(e) {
+    message("QDA a echoue (probablement covariance singuliere) : ", e$message)
+    NULL
+  }
+)
+```
+
+### CART
+
+```{r}
+# ============================================================
+# 3. CART (arbre de decision simple)
+# ============================================================
+# Hyperparametre : cp (complexity parameter), controle l'elagage.
+# Procedure : validation croisee sur une grille de cp.
+
+grille_cp <- expand.grid(cp = seq(0.0001, 0.02, length.out = 20))
+
+set.seed(123)
+modele_cart <- train(
+  is_spam ~ .,
+  data = train_set,
+  method = "rpart",
+  trControl = ctrl,
+  tuneGrid = grille_cp,
+  metric = metrique
+)
+
+print(modele_cart)
+plot(modele_cart)
+rpart.plot(modele_cart$finalModel, main = "Arbre CART (standard)")
+
+```
+
+```{r}
+# ============================================================
+# 4. CART avec cout differencie 5:1
+# ============================================================
+# Hypothese : bloquer un email legitime (faux positif : Non-spam classe Spam)
+# est juge 5 fois plus couteux que laisser passer un spam (faux negatif).
+# -> matrice de perte L[vrai, predit] :
+#        predit NonSpam   predit Spam
+# NonSpam      0              5
+# Spam         1              0
+# (a inverser si l'enonce de votre TP definit le cout dans l'autre sens)
+
+matrice_cout <- matrix(c(0, 5, 1, 0), byrow = TRUE, nrow = 2,
+                       dimnames = list(c("NonSpam", "Spam"), c("NonSpam", "Spam")))
+matrice_cout
+
+# Le cout n'est pas "optimise" par CV : il est fixe par l'enonce.
+# Seul cp reste a optimiser, mais caret::train ne transmet pas facilement
+# parms=list(loss=...) via tuneGrid -> on utilise rpart::rpart directement
+# avec sa propre validation croisee interne (xval) + courbe de cp.
+
+set.seed(123)
+arbre_cout_complet <- rpart(
+  is_spam ~ .,
+  data = train_set,
+  method = "class",
+  parms = list(loss = matrice_cout),
+  control = rpart.control(cp = 0.0001, xval = 10)
+)
+
+printcp(arbre_cout_complet)
+plotcp(arbre_cout_complet)  # permet de choisir cp via la regle du 1-ET
+
+# Selection du cp minimisant l'erreur de validation croisee (xerror)
+cp_optimal <- arbre_cout_complet$cptable[
+  which.min(arbre_cout_complet$cptable[, "xerror"]), "CP"
+]
+cp_optimal
+
+modele_cart_cout <- prune(arbre_cout_complet, cp = cp_optimal)
+rpart.plot(modele_cart_cout, main = "Arbre CART (cout 5:1)")
+
+```
+
+### Random forest
+
+```{r}
+# ============================================================
+# 5. Random Forest
+# ============================================================
+# Hyperparametre : mtry (nb de variables tirees a chaque split).
+# ntree : pas optimise par CV, fixe en verifiant que l'erreur OOB s'est stabilisee.
+
+p <- ncol(train_set) - 1  # nb de predicteurs (57)
+grille_rf <- expand.grid(mtry = c(2, 5, floor(sqrt(p)), 10, 15, 20, floor(p/3)))
+
+set.seed(123)
+modele_rf <- train(
+  is_spam ~ .,
+  data = train_set,
+  method = "rf",
+  trControl = ctrl,
+  tuneGrid = grille_rf,
+  metric = metrique,
+  ntree = 100
+)
+
+print(modele_rf)
+plot(modele_rf)
+plot(modele_rf$finalModel, main = "Erreur OOB vs nombre d'arbres")
+# -> verifier que la courbe se stabilise bien avant ntree=500
+
+par(mar = c(5, 12, 4, 2))
+varImpPlot(modele_rf$finalModel, main = "Importance des variables (RF)", cex = 0.7)
+# Remettre les marges par défaut ensuite si vous continuez à tracer d'autres graphiques
+par(mar = c(5, 4, 4, 2) + 0.1)
+```
+
+**`plot(modele_rf$finalModel) :`** Un graphique montrant l’évolution de l’erreur OOB en fonction du **nombre d’arbres** (1 à 500) — généralement 3 courbes (erreur globale, erreur classe “NonSpam”, erreur classe “Spam”). Sert à vérifier que l’erreur s’est bien **stabilisée** avant d’atteindre `ntree = 100` (si la courbe est encore en train de descendre à la fin, il faudrait augmenter `ntree`).
+
+**`varImpPlot(modele_rf$finalModel) :`** Un graphique à barres classant les 57 variables par importance — généralement mesurée par la **diminution moyenne de la précision** (`MeanDecreaseAccuracy`) ou la **diminution moyenne de l’impureté de Gini** (`MeanDecreaseGini`) quand la variable est retirée/permutée. Permet d’identifier les mots/caractères les plus discriminants pour détecter le spam (souvent `!`, `$`, `free`, `remove`, etc. dans ce dataset).
+
+### KNN
+
+```{r}
+# ============================================================
+# 6. k-Nearest Neighbors
+# ============================================================
+# Hyperparametre : k. Standardisation indispensable (distances euclidiennes).
+
+grille_knn <- expand.grid(k = seq(1, 31, by = 2))
+
+set.seed(123)
+modele_knn <- train(
+  is_spam ~ .,
+  data = train_set,
+  method = "knn",
+  trControl = ctrl,
+  tuneGrid = grille_knn,
+  metric = metrique,
+  preProcess = c("center", "scale")
+)
+
+modele_knn$bestTune
+plot(modele_knn)
+
+```
+
+### Comparaison des modèles
+
+```{r}
+# ============================================================
+# 7. Comparaison des modeles - ROC et AUC sur le jeu de TEST
+# ============================================================
+
+# Probabilites predites (classe "Spam") pour chaque modele
+prob_lda  <- predict(modele_lda,  newdata = test_set, type = "prob")[, "Spam"]
+prob_cart <- predict(modele_cart, newdata = test_set, type = "prob")[, "Spam"]
+prob_rf   <- predict(modele_rf,   newdata = test_set, type = "prob")[, "Spam"]
+prob_knn  <- predict(modele_knn,  newdata = test_set, type = "prob")[, "Spam"]
+
+# CART avec cout : objet rpart brut, pas caret -> predict direct
+prob_cart_cout <- predict(modele_cart_cout, newdata = test_set, type = "prob")[, "Spam"]
+
+roc_lda  <- roc(test_set$is_spam, prob_lda,  levels = c("NonSpam", "Spam"))
+roc_cart <- roc(test_set$is_spam, prob_cart, levels = c("NonSpam", "Spam"))
+roc_cart_cout <- roc(test_set$is_spam, prob_cart_cout, levels = c("NonSpam", "Spam"))
+roc_rf   <- roc(test_set$is_spam, prob_rf,   levels = c("NonSpam", "Spam"))
+roc_knn  <- roc(test_set$is_spam, prob_knn,  levels = c("NonSpam", "Spam"))
+
+if (!is.null(modele_qda)) {
+  prob_qda <- predict(modele_qda, newdata = test_set, type = "prob")[, "Spam"]
+  roc_qda  <- roc(test_set$is_spam, prob_qda, levels = c("NonSpam", "Spam"))
+}
+
+```
+
+```{r}
+# --- Trace superpose de toutes les courbes ROC ---
+plot(roc_lda, col = "blue", lwd = 2, main = "Comparaison des courbes ROC")
+lines(roc_cart, col = "red", lwd = 2)
+lines(roc_cart_cout, col = "orange", lwd = 2)
+lines(roc_rf, col = "darkgreen", lwd = 2)
+lines(roc_knn, col = "purple", lwd = 2)
+if (!is.null(modele_qda)) lines(roc_qda, col = "brown", lwd = 2)
+abline(a = 1, b = -1, lty = 2, col = "grey60")  # modele aleatoire sur l'echelle (1-spec, sens)
+
+legend("bottomright",
+       legend = c(
+         paste0("LDA (AUC=", round(auc(roc_lda), 3), ")"),
+         paste0("CART (AUC=", round(auc(roc_cart), 3), ")"),
+         paste0("CART cout 5:1 (AUC=", round(auc(roc_cart_cout), 3), ")"),
+         paste0("Random Forest (AUC=", round(auc(roc_rf), 3), ")"),
+         paste0("k-NN (AUC=", round(auc(roc_knn), 3), ")")
+       ),
+       col = c("blue", "red", "orange", "darkgreen", "purple"),
+       lwd = 2, cex = 0.8)
+
+```
+
+```{r}
+#--- Tableau recapitulatif des AUC ---
+  cat("\n==== Recapitulatif des AUC (jeu de test) ====\n")
+cat("LDA          :", round(auc(roc_lda), 4), "\n")
+if (!is.null(modele_qda)) cat("QDA          :", round(auc(roc_qda), 4), "\n")
+cat("CART         :", round(auc(roc_cart), 4), "\n")
+cat("CART cout 5:1:", round(auc(roc_cart_cout), 4), "\n")
+cat("Random Forest:", round(auc(roc_rf), 4), "\n")
+cat("k-NN         :", round(auc(roc_knn), 4), "\n")
+
+```
+
+```{r}
+# --- Matrices de confusion (seuil 0.5 par defaut) pour completer l'analyse ---
+confusionMatrix(predict(modele_lda, test_set), test_set$is_spam, positive = "Spam")
+confusionMatrix(predict(modele_cart, test_set), test_set$is_spam, positive = "Spam")
+confusionMatrix(
+  factor(ifelse(prob_cart_cout > 0.5, "Spam", "NonSpam"), levels = c("NonSpam","Spam")),
+  test_set$is_spam, positive = "Spam"
+)
+confusionMatrix(predict(modele_rf, test_set), test_set$is_spam, positive = "Spam")
+confusionMatrix(predict(modele_knn, test_set), test_set$is_spam, positive = "Spam")
+
+```
